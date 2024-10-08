@@ -6,12 +6,15 @@ namespace Fastcob;
 sealed class FastcobOptions : OptionInterface
 {
     public static Configurable<int> skipRendering;
-    // public static Configurable<bool> alternativeRendering;
+    public static Configurable<int> skipUpdate;
+    public static Configurable<bool> screenTransitionCheck;
+    public static Configurable<bool> movementCheck;
 
     public FastcobOptions()
     {
+
         skipRendering = this.config.Bind<int>(
-            key: "skiprendering",
+            key: "skipRendering",
             defaultValue: 4,
             info: new ConfigurableInfo(
                 description: "Only execute the sprite-drawing function every other # attempts",
@@ -19,11 +22,26 @@ sealed class FastcobOptions : OptionInterface
             )
         );
         
-        // alternativeRendering = this.config.Bind<bool>(
-        //     key: "alternativeRendering",
-        //     defaultValue: false,
-        //     info: new ConfigurableInfo("Use an alternative rendering method for SeedCob")
-        // );
+        skipUpdate = this.config.Bind<int>(
+            key: "skipUpdate",
+            defaultValue: 4,
+            info: new ConfigurableInfo(
+                description: "Only execute the update function every other # attempts",
+                acceptable: new ConfigAcceptableRange<int>(1, 128)
+            )
+        );
+        
+        screenTransitionCheck = this.config.Bind<bool>(
+            key: "screenTransitionCheck",
+            defaultValue: false,
+            info: new ConfigurableInfo("Do not skip when the camera moves")
+        );
+
+        movementCheck = this.config.Bind<bool>(
+            key: "movementCheck",
+            defaultValue: false,
+            info: new ConfigurableInfo("Do not skip when seedcobs are moving")
+        );
 
     }
 
@@ -47,11 +65,23 @@ sealed class FastcobOptions : OptionInterface
                 description = skipRendering.info.description
             },
 
-            // new OpLabel(new Vector2(x + 10, y -= 30), Vector2.zero, "Alternative Rendering", FLabelAlignment.Left),
-            // new OpCheckBox(alternativeRendering, new Vector2(x + 150, y - 4))
-            // {
-            //     description = alternativeRendering.info.description
-            // },
+            new OpLabel(new Vector2(x + 10, y -= 30), Vector2.zero, "Skip Update", FLabelAlignment.Left),
+            new OpSlider(skipUpdate, new Vector2(x + 110, y - 6), 400)
+            {
+                description = skipUpdate.info.description
+            },
+
+            new OpLabel(new Vector2(x + 10, y -= 30), Vector2.zero, "Screen Transition Check", FLabelAlignment.Left),
+            new OpCheckBox(screenTransitionCheck, new Vector2(x + 150, y - 4))
+            {
+                description = screenTransitionCheck.info.description
+            },
+
+            new OpLabel(new Vector2(x + 10, y -= 30), Vector2.zero, "Movement Check", FLabelAlignment.Left),
+            new OpCheckBox(movementCheck, new Vector2(x + 150, y - 4))
+            {
+                description = movementCheck.info.description
+            },
 
         };
 
