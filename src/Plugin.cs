@@ -1,7 +1,8 @@
 ﻿using BepInEx;
 using Expedition;
-using MoreSlugcats;
 using RWCustom;
+using System;
+using System.Collections.Generic;
 using System.Security.Permissions;
 using UnityEngine;
 
@@ -18,239 +19,48 @@ sealed class Plugin : BaseUnityPlugin
 {
     public const string PLUGIN_GUID = "znery.fastcob";
     public const string PLUGIN_NAME = "Fastcob";
-    public const string PLUGIN_VERSION = "0.1";
+    public const string PLUGIN_VERSION = "0.1.2";
 
     bool init;
-    bool moveCamera = false;
-    bool cobMoving = false;
-    // bool traced = false;
-    const int one_second = 40;
-    int timer;
-    int renderTries;
-    int updateTries;
-    // int drawCobCalls;
-    // int drawCobTotal;
+    HashSet<float> seedcobsDrawn = new HashSet<float> ();
 
     public void OnEnable()
     {
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
-        // On.RainWorldGame.Update += OnGameUpdate;
-        On.RoomCamera.SpriteLeaser.Update += OnSpriteLeaserUpdate;
-        // On.RoomCamera.MoveCamera2 += OnMoveCamera;
-        // On.SeedCob.Update += OnSeedcobUpdate;
-        // On.Room.AddObject += OnAddObject;
+        // On.SeedCob.DrawSprites += OnDrawSeedcob;
+        On.RoomCamera.SpriteLeaser.Update += OnSpriteUpdate;
+        On.RoomCamera.ApplyPositionChange += OnCameraMove;
+        On.SeedCob.HitByWeapon += OnSeedcobHit;
     }
 
-    private void OnModsInit(On.RainWorld.orig_OnModsInit orig, RainWorld self)
+    private void OnSeedcobHit(On.SeedCob.orig_HitByWeapon orig, SeedCob self, Weapon weapon)
+    {
+        orig(self, weapon);
+        seedcobsDrawn.Clear();
+    }
+
+    private void OnCameraMove(On.RoomCamera.orig_ApplyPositionChange orig, RoomCamera self)
     {
         orig(self);
-
-        MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
-
-        Logger.LogDebug("Options");
-        Logger.LogDebug("skipRender: " + FastcobOptions.skipRendering.Value);
-        Logger.LogDebug("skipUpdate: " + FastcobOptions.skipUpdate.Value);
-        Logger.LogDebug("screenTransitionCheck: " + FastcobOptions.screenTransitionCheck.Value);
-        Logger.LogDebug("movementCheck: " + FastcobOptions.movementCheck.Value);
-
-        if (init) return;
-        init = true;
-        Logger.LogDebug("Init");
+        seedcobsDrawn.Clear();
     }
 
-    void OnGameUpdate(On.RainWorldGame.orig_Update orig, RainWorldGame self)
+    private void OnSpriteUpdate(On.RoomCamera.SpriteLeaser.orig_Update orig, RoomCamera.SpriteLeaser self, float timeStacker, RoomCamera rCam, Vector2 camPos)
     {
-        orig(self);
-        // if (!moveCamera) return;
-        timer++;
-        if (timer > 10)
-        {
-
-            // drawCobTotal += drawCobCalls;
-            // Logger.LogDebug(drawCobTotal + " " + drawCobCalls);
-            // drawCobCalls = 0;
-
-            // UnityEngine.Debug.Log("movement");
-            // UnityEngine.Debug.Log(FastcobOptions.movementCheck.Value && cobMoving);
-
-            moveCamera = false;
-            timer = 0;
-        }
-    }
-
-    void OnMoveCamera(On.RoomCamera.orig_MoveCamera2 orig, RoomCamera self, string roomName, int camPos)
-    {
-        moveCamera = true;
-        timer = 0;
-        orig(self, roomName, camPos);
-    }
-
-    void altSeedcobUpdate(SeedCob self, bool eu)
-    {
-        PhysicalObject seedcobObject = self as PhysicalObject;
-        seedcobObject.Update(eu);
-        if ((ModManager.MSC && self.room != null && self.room.roomSettings.DangerType == MoreSlugcatsEnums.RoomRainDangerType.Blizzard) || self.freezingCounter > 0f)
-        {
-            self.freezingCounter = Mathf.InverseLerp(self.AbstractCob.world.rainCycle.cycleLength, self.AllPlantsFrozenCycleTime, self.AbstractCob.world.rainCycle.timer);
-            if (!self.AbstractCob.opened && self.freezingCounter >= 0.5f && UnityEngine.Random.value < 0.005f)
-            {
-                self.room.PlaySound(SoundID.Snail_Warning_Click, seedcobObject.bodyChunks[0], loop: false, 0.4f, UnityEngine.Random.Range(1.4f, 1.9f));
-                seedcobObject.bodyChunks[0].vel += Custom.RNV() * self.freezingCounter;
-            }
-            if (!self.AbstractCob.opened && self.freezingCounter >= 1f && UnityEngine.Random.value < 0.002f)
-            {
-                self.spawnUtilityFoods();
-                self.room.PlaySound(SoundID.Seed_Cob_Open, seedcobObject.firstChunk);
-            }
-        }
-        seedcobObject.firstChunk.vel += (self.placedPos - seedcobObject.firstChunk.pos) / Custom.LerpMap(Vector2.Distance(self.placedPos, seedcobObject.firstChunk.pos), 5f, 100f, 2000f, 150f, 0.8f);
-        seedcobObject.bodyChunks[1].vel += (self.placedPos + self.cobDir * self.bodyChunkConnections[0].distance - seedcobObject.bodyChunks[1].pos) / Custom.LerpMap(Vector2.Distance(self.placedPos + self.cobDir * self.bodyChunkConnections[0].distance, seedcobObject.bodyChunks[1].pos), 5f, 100f, 800f, 50f, 0.2f);
-        if (!Custom.DistLess(seedcobObject.bodyChunks[1].pos, self.rootPos, self.stalkLength))
-        {
-            Vector2 vector = Custom.DirVec(seedcobObject.bodyChunks[1].pos, self.rootPos);
-            float num = Vector2.Distance(seedcobObject.bodyChunks[1].pos, self.rootPos);
-            seedcobObject.bodyChunks[1].pos += vector * (num - self.stalkLength) * 0.2f;
-            seedcobObject.bodyChunks[1].vel += vector * (num - self.stalkLength) * 0.2f;
-        }
-        self.lastOpen = self.open;
-        if (self.AbstractCob.opened)
-        {
-            self.open = Mathf.Lerp(self.open, 1f, Mathf.Lerp(0.01f, 0.0001f, self.open));
-        }
-        if (self.seedPopCounter > -1)
-        {
-            self.seedPopCounter--;
-            if (self.seedPopCounter < 1)
-            {
-                for (int i = 0; i < self.seedsPopped.Length; i++)
-                {
-                    if (!self.seedsPopped[i])
-                    {
-                        self.seedsPopped[i] = true;
-                        float num2 = (float)i / (float)(self.seedsPopped.Length - 1);
-                        if (i == self.seedsPopped.Length - 1)
-                        {
-                            self.seedPopCounter = -1;
-                        }
-                        else
-                        {
-                            self.seedPopCounter = Mathf.RoundToInt(Mathf.Pow(1f - num2, 0.5f) * 20f * (0.5f + 0.5f * UnityEngine.Random.value));
-                        }
-                        Vector2 normalized = (Custom.PerpendicularVector(seedcobObject.bodyChunks[0].pos, seedcobObject.bodyChunks[1].pos) * self.seedPositions[i].x + Custom.RNV() * UnityEngine.Random.value).normalized;
-                        seedcobObject.firstChunk.vel += normalized * 0.7f * self.seedPositions[i].y;
-                        seedcobObject.firstChunk.pos += normalized * 0.7f * self.seedPositions[i].y;
-                        seedcobObject.bodyChunks[1].vel += normalized * 0.7f * (1f - self.seedPositions[i].y);
-                        seedcobObject.bodyChunks[1].pos += normalized * 0.7f * (1f - self.seedPositions[i].y);
-                        Vector2 pos = Vector2.Lerp(seedcobObject.bodyChunks[1].pos, seedcobObject.bodyChunks[0].pos, self.seedPositions[i].y);
-                        self.room.PlaySound(SoundID.Seed_Cob_Pop, pos);
-                        self.room.AddObject(new WaterDrip(pos, (Vector2)Vector3.Slerp(Custom.PerpendicularVector(seedcobObject.bodyChunks[1].pos, seedcobObject.bodyChunks[0].pos) * self.seedPositions[i].x, Custom.DirVec(seedcobObject.bodyChunks[0].pos, seedcobObject.bodyChunks[1].pos), Mathf.Pow(num2, 2f) * 0.5f) * 11f + Custom.RNV() * 4f * UnityEngine.Random.value, waterColor: false));
-                        break;
-                    }
-                }
-            }
-        }
-        float num3 = Custom.AimFromOneVectorToAnother(seedcobObject.firstChunk.pos, seedcobObject.bodyChunks[1].pos);
-        for (int j = 0; j < self.leaves.GetLength(0); j++)
-        {
-            self.leaves[j, 1] = self.leaves[j, 0];
-            self.leaves[j, 0] += self.leaves[j, 2];
-            self.leaves[j, 2] *= 0.9f;
-            Vector2 vector2 = Custom.DirVec(self.leaves[j, 0], seedcobObject.bodyChunks[1].pos);
-            float num4 = Vector2.Distance(self.leaves[j, 0], seedcobObject.bodyChunks[1].pos);
-            self.leaves[j, 0] += vector2 * (num4 - self.leaves[j, 3].y);
-            self.leaves[j, 2] += vector2 * (num4 - self.leaves[j, 3].y);
-            self.leaves[j, 2] += Custom.DegToVec(num3 + Mathf.Lerp(-45f, 45f, (float)j / (float)(self.leaves.GetLength(0) - 1)));
-        }
-        if (self.delayedPush.HasValue)
-        {
-            if (self.pushDelay > 0)
-            {
-                self.pushDelay--;
-            }
-            else
-            {
-                seedcobObject.firstChunk.vel += self.delayedPush.Value;
-                seedcobObject.bodyChunks[1].vel += self.delayedPush.Value;
-                self.room.PlaySound(SoundID.Seed_Cob_Pick, seedcobObject.firstChunk.pos);
-                self.delayedPush = null;
-            }
-        }
-        if (self.AbstractCob.dead || !(self.open > 0.8f))
-        {
-            return;
-        }
-        for (int k = 0; k < (ModManager.MSC ? self.room.abstractRoom.creatures.Count : self.room.game.Players.Count); k++)
-        {
-            Player player;
-            if (ModManager.MSC)
-            {
-                Creature realizedCreature = self.room.abstractRoom.creatures[k].realizedCreature;
-                if (realizedCreature == null || !(realizedCreature is Player))
-                {
-                    continue;
-                }
-                player = realizedCreature as Player;
-            }
-            else
-            {
-                if (self.room.game.Players[k].realizedCreature == null)
-                {
-                    continue;
-                }
-                player = self.room.game.Players[k].realizedCreature as Player;
-            }
-            if (player.room != self.room || player.handOnExternalFoodSource.HasValue || player.eatExternalFoodSourceCounter >= 1 || player.dontEatExternalFoodSourceCounter >= 1 || player.FoodInStomach >= player.MaxFoodInStomach || (player.touchedNoInputCounter <= 5 && !player.input[0].pckp && (!ModManager.MSC || !(player.abstractCreature.creatureTemplate.type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC))) || (ModManager.MSC && !(player.SlugCatClass != MoreSlugcatsEnums.SlugcatStatsName.Spear)) || player.FreeHand() <= -1)
-            {
-                continue;
-            }
-            Vector2 pos2 = player.mainBodyChunk.pos;
-            Vector2 vector3 = Custom.ClosestPointOnLineSegment(seedcobObject.bodyChunks[0].pos, seedcobObject.bodyChunks[1].pos, pos2);
-            if (Custom.DistLess(pos2, vector3, 25f))
-            {
-                player.handOnExternalFoodSource = vector3 + Custom.DirVec(pos2, vector3) * 5f;
-                player.eatExternalFoodSourceCounter = 15;
-                if (self.room.game.IsStorySession && player.abstractCreature.creatureTemplate.type == CreatureTemplate.Type.Slugcat && self.room.game.GetStorySession.playerSessionRecords != null)
-                {
-                    self.room.game.GetStorySession.playerSessionRecords[(player.abstractCreature.state as PlayerState).playerNumber].AddEat(self);
-                }
-                self.delayedPush = Custom.DirVec(pos2, vector3) * 1.2f;
-                self.pushDelay = 4;
-                if (player.graphicsModule != null)
-                {
-                    (player.graphicsModule as PlayerGraphics).LookAtPoint(vector3, 100f);
-                }
-            }
-        }
-    }
-
-    void OnSeedcobUpdate(On.SeedCob.orig_Update orig, SeedCob self, bool eu)
-    {
-        updateTries++;
-        if (updateTries < FastcobOptions.skipUpdate.Value) return;
-        for (int i = 0; i < FastcobOptions.skipUpdate.Value; i++)
-        {
-            orig(self, eu);
-        }
-        updateTries = 0;
-        cobMoving = self.bodyChunks[0].vel.x > 0.01f;
-        if (cobMoving)
-        {
-            UnityEngine.Debug.Log("moving");
-            UnityEngine.Debug.Log(cobMoving);
-        }
-    }
-
-    void OnSpriteLeaserUpdate(On.RoomCamera.SpriteLeaser.orig_Update orig, RoomCamera.SpriteLeaser self, float timeStacker, RoomCamera rCam, Vector2 camPos)
-    {
-
-        RainWorld.CurrentlyDrawingObject = self.drawableObject;
         if (self.drawableObject is SeedCob)
         {
-            renderTries++;
-            if (renderTries < FastcobOptions.skipRendering.Value) return;
-            renderTries = 0;
+            float seedcob_pos_x = (self.drawableObject as SeedCob).placedPos.x;
+            if (!seedcobsDrawn.Contains(seedcob_pos_x))
+            {
+                seedcobsDrawn.Add(seedcob_pos_x);
+            }
+            else if (seedcobsDrawn.Contains(seedcob_pos_x))
+            {
+                return;
+            }
         }
+        RainWorld.CurrentlyDrawingObject = self.drawableObject;
         self.drawableObject.DrawSprites(self, rCam, timeStacker, camPos);
         if (self.drawableObject is CosmeticSprite)
         {
@@ -260,6 +70,163 @@ sealed class Plugin : BaseUnityPlugin
         {
             self.rbUpdate(timeStacker);
         }
+    }
 
+    private void OnDrawSeedcob(On.SeedCob.orig_DrawSprites orig, SeedCob self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos)
+    {
+        // orig(self, sLeaser, rCam, timeStacker, camPos);
+        PhysicalObject basePhysicalObject = (self as PhysicalObject);
+
+        if (ModManager.MSC && self.freezingCounter > 0f)
+        {
+            self.FreezingPaletteUpdate(sLeaser, rCam);
+        }
+
+        Vector2 vector = Vector2.Lerp(basePhysicalObject.firstChunk.lastPos, basePhysicalObject.firstChunk.pos, timeStacker);
+        Vector2 vector2 = Vector2.Lerp(basePhysicalObject.bodyChunks[1].lastPos, basePhysicalObject.bodyChunks[1].pos, timeStacker);
+        float num = 0.5f;
+        Vector2 vector3 = self.rootPos;
+
+        // stems
+
+        for (int i = 0; i < self.stalkSegments; i++)
+        {
+            float num2 = (float)i / (float)(self.stalkSegments - 1);
+            Vector2 vector4 = Custom.Bezier(self.rootPos, self.rootPos + self.rootDir * Vector2.Distance(self.rootPos, self.placedPos) * 0.2f, vector2, vector2 + Custom.DirVec(vector, vector2) * Vector2.Distance(self.rootPos, self.placedPos) * 0.2f, num2);
+            Vector2 normalized = (vector3 - vector4).normalized;
+            Vector2 vector5 = Custom.PerpendicularVector(normalized);
+            float num3 = Vector2.Distance(vector3, vector4) / 5f;
+            float num4 = Mathf.Lerp(self.bodyChunkConnections[0].distance / 14f, 1.5f, Mathf.Pow(Mathf.Sin(Mathf.Pow(num2, 2f) * 3.1415927f), 0.5f));
+            float num5 = 1f;
+            Vector2 vector6 = default(Vector2);
+            for (int j = 0; j < 2; j++)
+            {
+                TriangleMesh mesh1 = (sLeaser.sprites[self.StalkSprite(j)] as TriangleMesh);
+                mesh1.MoveVertice(i * 4, vector3 - normalized * num3 - vector5 * (num4 + num) * 0.5f * num5 - camPos + vector6);
+                mesh1.MoveVertice(i * 4 + 1, vector3 - normalized * num3 + vector5 * (num4 + num) * 0.5f * num5 - camPos + vector6);
+                mesh1.MoveVertice(i * 4 + 2, vector4 + normalized * num3 - vector5 * num4 * num5 - camPos + vector6);
+                mesh1.MoveVertice(i * 4 + 3, vector4 + normalized * num3 + vector5 * num4 * num5 - camPos + vector6);
+                num5 = 0.35f;
+                vector6 += -rCam.room.lightAngle.normalized * num4 * 0.5f;
+            }
+            vector3 = vector4;
+            num = num4;
+        }
+
+        vector3 = vector2 + Custom.DirVec(vector, vector2);
+        num = 2f;
+
+        // cob body box
+
+        for (int k = 0; k < self.cobSegments; k++)
+        {
+            float num6 = (float)k / (float)(self.cobSegments - 1);
+            Vector2 vector7 = Vector2.Lerp(vector2, vector, num6);
+            Vector2 normalized2 = (vector3 - vector7).normalized;
+            Vector2 vector8 = Custom.PerpendicularVector(normalized2);
+            float num7 = Vector2.Distance(vector3, vector7) / 5f;
+            float num8 = 2f;
+            (sLeaser.sprites[self.CobSprite] as TriangleMesh).MoveVertice(k * 4, vector3 - normalized2 * num7 - vector8 * (num8 + num) * 0.5f - camPos);
+            (sLeaser.sprites[self.CobSprite] as TriangleMesh).MoveVertice(k * 4 + 1, vector3 - normalized2 * num7 + vector8 * (num8 + num) * 0.5f - camPos);
+            (sLeaser.sprites[self.CobSprite] as TriangleMesh).MoveVertice(k * 4 + 2, vector7 + normalized2 * num7 - vector8 * num8 - camPos);
+            (sLeaser.sprites[self.CobSprite] as TriangleMesh).MoveVertice(k * 4 + 3, vector7 + normalized2 * num7 + vector8 * num8 - camPos);
+            vector3 = vector7;
+            num = num8;
+        }
+        float num9 = Mathf.Lerp(self.lastOpen, self.open, timeStacker);
+
+        // cob body leaves
+
+        for (int l = 0; l < 2; l++)
+        {
+            float num10 = -1f + (float)l * 2f;
+            num = 2f;
+            vector3 = vector + Custom.DirVec(vector2, vector) * 7f;
+            float num11 = Custom.AimFromOneVectorToAnother(vector, vector2);
+            Vector2 vector9 = vector;
+            for (int m = 0; m < self.cobSegments; m++)
+            {
+                float num12 = (float)m / (float)(self.cobSegments - 1);
+                vector9 += Custom.DegToVec(num11 + num10 * Mathf.Pow(num9, Mathf.Lerp(1f, 0.1f, num12)) * 50f * Mathf.Pow(num12, 0.5f)) * (Vector2.Distance(vector, vector2) * 1.1f + 8f) / (float)self.cobSegments;
+                Vector2 normalized3 = (vector3 - vector9).normalized;
+                Vector2 vector10 = Custom.PerpendicularVector(normalized3);
+                float num13 = Vector2.Distance(vector3, vector9) / 5f;
+                float num14 = Mathf.Lerp(2f, 6f, Mathf.Pow(Mathf.Sin(Mathf.Pow(num12, 0.5f) * 3.1415927f), 0.5f));
+                (sLeaser.sprites[self.ShellSprite(l)] as TriangleMesh).MoveVertice(m * 4, vector3 - normalized3 * num13 - vector10 * (num14 + num) * 0.5f * (float)(1 - l) - camPos);
+                (sLeaser.sprites[self.ShellSprite(l)] as TriangleMesh).MoveVertice(m * 4 + 1, vector3 - normalized3 * num13 + vector10 * (num14 + num) * 0.5f * (float)l - camPos);
+                (sLeaser.sprites[self.ShellSprite(l)] as TriangleMesh).MoveVertice(m * 4 + 2, vector9 + normalized3 * num13 - vector10 * num14 * (float)(1 - l) - camPos);
+                (sLeaser.sprites[self.ShellSprite(l)] as TriangleMesh).MoveVertice(m * 4 + 3, vector9 + normalized3 * num13 + vector10 * num14 * (float)l - camPos);
+                vector3 = new Vector2(vector9.x, vector9.y);
+                num = num14;
+                num11 = Custom.VecToDeg(-normalized3);
+            }
+        }
+
+        // cob fruits
+
+        if (num9 > 0f)
+        {
+            Vector2 vector11 = Custom.DirVec(vector2, vector);
+            Vector2 vector12 = Custom.PerpendicularVector(vector11);
+            for (int n = 0; n < self.seedPositions.Length; n++)
+            {
+                Vector2 vector13 = vector2 + vector11 * self.seedPositions[n].y * (Vector2.Distance(vector2, vector) - 10f) + vector12 * self.seedPositions[n].x * 3f;
+                float num15 = 1f + Mathf.Sin((float)n / (float)(self.seedPositions.Length - 1) * 3.1415927f);
+                if (self.AbstractCob.dead)
+                {
+                    num15 *= 0.5f;
+                }
+                sLeaser.sprites[self.SeedSprite(n, 0)].isVisible = true;
+                sLeaser.sprites[self.SeedSprite(n, 1)].isVisible = self.seedsPopped[n];
+                sLeaser.sprites[self.SeedSprite(n, 2)].isVisible = true;
+                sLeaser.sprites[self.SeedSprite(n, 0)].scale = (self.seedsPopped[n] ? num15 : 0.35f);
+                sLeaser.sprites[self.SeedSprite(n, 0)].x = vector13.x - camPos.x;
+                sLeaser.sprites[self.SeedSprite(n, 0)].y = vector13.y - camPos.y;
+                Vector2 vector14 = default(Vector2);
+                if (self.seedsPopped[n])
+                {
+                    vector14 = vector12 * Mathf.Pow(Mathf.Abs(self.seedPositions[n].x), Custom.LerpMap(num15, 1f, 2f, 1f, 0.5f)) * Mathf.Sign(self.seedPositions[n].x) * 3.5f * num15;
+                    if (!self.AbstractCob.dead)
+                    {
+                        sLeaser.sprites[self.SeedSprite(n, 2)].element = Futile.atlasManager.GetElementWithName("tinyStar");
+                    }
+                    sLeaser.sprites[self.SeedSprite(n, 2)].rotation = Custom.VecToDeg(vector11);
+                    sLeaser.sprites[self.SeedSprite(n, 2)].scaleX = Mathf.Pow(1f - Mathf.Abs(self.seedPositions[n].x), 0.2f);
+                }
+                sLeaser.sprites[self.SeedSprite(n, 1)].x = vector13.x + vector14.x * 0.35f - camPos.x;
+                sLeaser.sprites[self.SeedSprite(n, 1)].y = vector13.y + vector14.y * 0.35f - camPos.y;
+                sLeaser.sprites[self.SeedSprite(n, 1)].scale = (self.seedsPopped[n] ? num15 : 0.4f) * 0.5f;
+                sLeaser.sprites[self.SeedSprite(n, 2)].x = vector13.x + vector14.x - camPos.x;
+                sLeaser.sprites[self.SeedSprite(n, 2)].y = vector13.y + vector14.y - camPos.y;
+            }
+        }
+
+        // stem leaves
+
+        for (int num16 = 0; num16 < self.leaves.GetLength(0); num16++)
+        {
+            Vector2 vector15 = Vector2.Lerp(self.leaves[num16, 1], self.leaves[num16, 0], timeStacker);
+            sLeaser.sprites[self.LeafSprite(num16)].x = vector2.x - camPos.x;
+            sLeaser.sprites[self.LeafSprite(num16)].y = vector2.y - camPos.y;
+            sLeaser.sprites[self.LeafSprite(num16)].rotation = Custom.AimFromOneVectorToAnother(vector2, vector15);
+            sLeaser.sprites[self.LeafSprite(num16)].scaleY = Vector2.Distance(vector2, vector15) / 26f;
+        }
+        if (basePhysicalObject.slatedForDeletetion || self.room != rCam.room)
+        {
+            sLeaser.CleanSpritesAndRemove();
+        }
+
+    }
+
+    private void OnModsInit(On.RainWorld.orig_OnModsInit orig, RainWorld self)
+    {
+        orig(self);
+
+        MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
+        Logger.LogDebug("Options");
+
+        if (init) return;
+        init = true;
+        Logger.LogDebug("Init");
     }
 }
