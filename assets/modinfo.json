@@ -1,11 +1,11 @@
 ﻿{
     "id": "znery.fastcob",
-    "name": "Fast Cob",
-    "version": "0.1",
+    "name": "Fastcob",
+    "version": "0.1.99",
     "authors": "znery",
 	"description": "",
-	"requirements": [],
-	"requirement_names": [],
+    "requirements": ["bro.mergefix"],
+	"requirement_names": ["Merge Fix"],
     "priorities": [],
 	"tags": [],
     "checksum_override_version": false
