@@ -6,6 +6,9 @@ using Unity.Jobs;
 using RWCustom;
 using System.Collections.Generic;
 using System;
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
+using Unity.Profiling;
 
 
 // Allows access to private members
@@ -30,12 +33,85 @@ sealed class Plugin : BaseUnityPlugin
 
     bool init;
     SeedcobDrawSpriteParallel parallel = new SeedcobDrawSpriteParallel();
+    static readonly ProfilerMarker s_FutileMarker = new ProfilerMarker(ProfilerCategory.Scripts, "Futile_Update_profile");
 
     public void OnEnable()
     {
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
+        On.Futile.Update += OnFutileUpdate;
+
+        
+        try 
+        {
+            // IL.Futile.Update += Futile_Update;
+            // IL.RoomCamera.DrawUpdate += RoomCamera_DrawUpdate;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError(e.ToString());
+            Logger.LogError(e);
+        }
+    }
+
+    private void OnFutileUpdate(On.Futile.orig_Update orig, Futile self)
+    {
+#if DEBUG
+        s_FutileMarker.Begin();
+        Logger.LogDebug("test");
+#endif
+        orig(self);
+#if DEBUG
+        s_FutileMarker.End();
+#endif
+    }
+
+    private void RoomCamera_DrawUpdate(ILContext il)
+    {
+        var cursor = new ILCursor(il);
+
+        cursor.GotoNext(
+                x => x.MatchLdarg(0),
+                x => x.MatchLdfld<RoomCamera>(nameof(RoomCamera.spriteLeasers)),
+                x => x.MatchCallvirt<System.Collections.Generic.List<RoomCamera.SpriteLeaser>>(nameof(System.Collections.Generic.List<RoomCamera.SpriteLeaser>.Count)),
+                x => x.MatchLdcI4(1),
+                x => x.MatchSub(),
+                x => x.MatchStloc(3)
+                );
+        cursor.Index -= 1;
+        cursor.EmitDelegate<Action>(() =>
+                {
+                    List<RoomCamera.SpriteLeaser> leaserList = new List<RoomCamera.SpriteLeaser>();
+                });
+    }
+
+    private void Futile_Update(ILContext il)
+    {
+        var cursor = new ILCursor(il);
+
+        cursor.GotoNext(
+                x => x.MatchLdarg(0),
+                x => x.MatchCall<Futile>(nameof(Futile.ProcessDelayedCallbacks))
+                );
+        cursor.Index += 1;
+        cursor.EmitDelegate<Action>(() =>
+                {
+                    // Logger.LogDebug(s_FutileMarker.ToString());
+                    s_FutileMarker.Begin();
+                });
+
+        cursor.GotoNext(
+                x => x.MatchLdcI4(0),
+                x => x.MatchStsfld<Futile>(nameof(Futile._isDepthChangeNeeded)),
+                x => x.MatchLdarg(0)
+                );
+        cursor.EmitDelegate<Action>(() =>
+                {
+                    // Logger.LogDebug("il hook end");
+                    s_FutileMarker.End();
+                });
+        Logger.LogDebug(il);
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
