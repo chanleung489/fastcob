@@ -10,6 +10,7 @@ using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using Unity.Profiling;
 using System.Reflection;
+using System.Collections.Concurrent;
 
 
 // Allows access to private members
@@ -37,7 +38,9 @@ sealed class Plugin : BaseUnityPlugin
     }
 
     bool init;
-    SeedcobDrawJob seedcobDrawJobInstance = new SeedcobDrawJob();
+    SeedcobDrawSpriteParallel seedcobParallelInstance = new SeedcobDrawSpriteParallel();
+    // public ConcurrentQueue<System.Action> callAtMainThread = new ConcurrentQueue<Action>();
+    public static new BepInEx.Logging.ManualLogSource Logger;
 
     static readonly ProfilerMarker s_FutileMarker = new ProfilerMarker("Futile_Update_profile");
     static readonly ProfilerMarker marker1 = new ProfilerMarker("marker1");
@@ -48,14 +51,15 @@ sealed class Plugin : BaseUnityPlugin
 
     public void OnEnable()
     {
+        Logger = base.Logger;
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
+        On.RainWorld.Update += OnGameUpdate;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
         // On.Futile.Update += OnFutileUpdate;
         On.FStage.Redraw += OnFStageRedraw;
-        // On.FNode.Redraw += OnFNodeRedraw;
-        On.FSprite.Redraw += OnFSpriteRedraw;
-        // On.FFacetType.CreateQuadLayer += OnFFacetCreateQuad;
+        On.FContainer.Redraw += OnFContainerRedraw;
+        // On.FSprite.Redraw += OnFSpriteRedraw;
 
         try
         {
@@ -69,103 +73,129 @@ sealed class Plugin : BaseUnityPlugin
         }
     }
 
-    private void OnFSpriteRedraw(On.FSprite.orig_Redraw orig, FSprite self, bool shouldForceDirty, bool shouldUpdateDepth)
+    private void OnFContainerRedraw(On.FContainer.orig_Redraw orig, FContainer self, bool shouldForceDirty, bool shouldUpdateDepth)
     {
+        using (marker2.Auto())
+        {
+            orig(self, shouldForceDirty, shouldUpdateDepth);
+        }
+        return;
         bool isMatrixDirty = self._isMatrixDirty;
         bool isAlphaDirty = self._isAlphaDirty;
         self.UpdateDepthMatrixAlpha(shouldForceDirty, shouldUpdateDepth);
-        if (shouldUpdateDepth)
+        int count = self._childNodes.Count;
+        List<FSprite> spriteList = new List<FSprite>();
+        for (int i = 0; i < count; i++)
         {
-            (self as FFacetNode).UpdateFacets();
+            self._childNodes[i].Redraw(shouldForceDirty || isAlphaDirty, shouldUpdateDepth);
+            if (self._childNodes[i] is FSprite)
+            {
+                FSprite sprite = self._childNodes[i] as FSprite;
+                if (sprite._isMeshDirty && sprite._isOnStage && sprite._firstFacetIndex != -1)
+                {
+                    spriteList.Add(sprite);
+                }
+            }
         }
-        if (self._isMeshDirty || shouldForceDirty || shouldUpdateDepth)
+        var sprites = new NativeArray<NonNullFSprite>(spriteList.Count, Allocator.Temp);
+        for (int i = 0; i < spriteList.Count; i++)
         {
-            self._isMeshDirty = true;
+            sprites[i] = new NonNullFSprite() { sprite = spriteList[i] };
         }
-        if (self._isAlphaDirty || shouldForceDirty)
+        var job = new FSpritePopulateRenderLayerJob.PopulateJob()
         {
-            self._isMeshDirty = true;
-            self._color.ApplyMultipliedAlpha(ref self._alphaColor, self._concatenatedAlpha);
-        }
-        if (self._areLocalVerticesDirty)
-        {
-            self.UpdateLocalVertices();
-        }
-        if (self._isMeshDirty)
-        {
-            self.PopulateRenderLayer();
-        }
+            sprites = sprites,
+        };
+        JobHandle jobHandle = job.Schedule(count, 16);
+        jobHandle.Complete();
+        sprites.Dispose();
+        // return;
+        // for (int i = 0; i < count; i++)
+        // {
+        //     FNode node = self._childNodes[i];
+        //     switch (node)
+        //     {
+        //         case FSprite sprite:
+        //             using (marker3.Auto())
+        //             {
+        //
+        //                 sprite.Redraw(shouldForceDirty, shouldUpdateDepth);
+        //             }
+        //             break;
+        //         case FStage stage:
+        //             using (marker5.Auto())
+        //             {
+        //
+        //                 stage.Redraw(shouldForceDirty, shouldUpdateDepth);
+        //             }
+        //             break;
+        //         case FLabel label:
+        //             using (marker4.Auto())
+        //             {
+        //
+        //                 label.Redraw(shouldForceDirty, shouldUpdateDepth);
+        //             }
+        //             break;
+        //         case FContainer container:
+        //             using (marker2.Auto())
+        //             {
+        //
+        //                 container.Redraw(shouldForceDirty, shouldUpdateDepth);
+        //             }
+        //             break;
+        //         default:
+        //             node.Redraw(shouldForceDirty || isMatrixDirty || isAlphaDirty, shouldUpdateDepth);
+        //             break;
+        //     }
+        // }
+    }
+
+    private void OnGameUpdate(On.RainWorld.orig_Update orig, RainWorld self)
+
+    {
+        orig(self);
+        // Action action;
+        // while (callAtMainThread.TryDequeue(out action))
+        // {
+        //     action.Invoke();
+        // }
     }
 
     private void OnFStageRedraw(On.FStage.orig_Redraw orig, FStage self, bool shouldForceDirty, bool shouldUpdateDepth)
     {
-        // using (marker1.Auto())
-        // {
-        //     orig(self, shouldForceDirty, shouldUpdateDepth);
-        // }
-        // return;
-
-        bool flag = self._needsDepthUpdate || shouldUpdateDepth;
-        self._needsDepthUpdate = false;
-        if (flag)
+        using (marker1.Auto())
         {
-            shouldForceDirty = true;
-            shouldUpdateDepth = true;
-            self.nextNodeDepth = self.index * 10000;
-            self._renderer.StartRender();
-        }
-        bool isAlphaDirty = self._isAlphaDirty;
-        self.UpdateDepthMatrixAlpha(shouldForceDirty, shouldUpdateDepth);
-        int count = self._childNodes.Count;
 
-        try
-        {
-            List<FSprite> spriteList = new List<FSprite>();
+            bool flag = self._needsDepthUpdate || shouldUpdateDepth;
+            self._needsDepthUpdate = false;
+            if (flag)
+            {
+                shouldForceDirty = true;
+                shouldUpdateDepth = true;
+                self.nextNodeDepth = self.index * 10000;
+                self._renderer.StartRender();
+            }
+            bool isAlphaDirty = self._isAlphaDirty;
+            self.UpdateDepthMatrixAlpha(shouldForceDirty, shouldUpdateDepth);
+            int count = self._childNodes.Count;
             for (int i = 0; i < count; i++)
             {
                 self._childNodes[i].Redraw(shouldForceDirty || isAlphaDirty, shouldUpdateDepth);
-                if (self._childNodes[i] is FSprite)
-                {
-                    FSprite sprite = self._childNodes[i] as FSprite;
-                    if (sprite._isMeshDirty && sprite._isOnStage && sprite._firstFacetIndex != -1)
-                    {
-                        spriteList.Add(sprite);
-                    }
-                }
             }
-            var sprites = new NativeArray<NonNullFSprite>(count, Allocator.Temp);
-            for (int i = 0; i < spriteList.Count; i++)
+            self.UpdateFollow();
+            if (flag)
             {
-                sprites[i] = new NonNullFSprite() { sprite = (FSprite)self._childNodes[i] };
+                self._renderer.EndRender();
+                Futile.touchManager.HandleDepthChange();
             }
-            var job = new FSpritePopulateRenderLayerJob.PopulateJob()
+            if (self._doesRendererNeedTransformChange)
             {
-                sprites = sprites,
-            };
-            JobHandle jobHandle = job.Schedule(count, 64);
-            jobHandle.Complete();
-            sprites.Dispose();
-
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError(e.ToString());
-            Logger.LogError(e);
-        }
-
-        self.UpdateFollow();
-        if (flag)
-        {
-            self._renderer.EndRender();
-            Futile.touchManager.HandleDepthChange();
-        }
-        if (self._doesRendererNeedTransformChange)
-        {
-            self._doesRendererNeedTransformChange = false;
-            self._transform.position = new Vector3(self._x, self._y, 0f);
-            self._transform.rotation = Quaternion.AngleAxis(self._rotation, Vector3.back);
-            self._transform.localScale = new Vector3(self._scaleX * self._visibleScale, self._scaleX * self._visibleScale, self._scaleX * self._visibleScale);
-            self._renderer.UpdateLayerTransforms();
+                self._doesRendererNeedTransformChange = false;
+                self._transform.position = new Vector3(self._x, self._y, 0f);
+                self._transform.rotation = Quaternion.AngleAxis(self._rotation, Vector3.back);
+                self._transform.localScale = new Vector3(self._scaleX * self._visibleScale, self._scaleX * self._visibleScale, self._scaleX * self._visibleScale);
+                self._renderer.UpdateLayerTransforms();
+            }
         }
 
         // stagesList.Add(self);
@@ -212,7 +242,7 @@ sealed class Plugin : BaseUnityPlugin
                     {
                         leasers[i] = new NonNullLeaser() { sLeaser = leaserList[i], rCam = self };
                     }
-                    JobHandle jobHandle = seedcobDrawJobInstance.Update(leasers, timeStacker, self, vector);
+                    JobHandle jobHandle = seedcobParallelInstance.Update(leasers, timeStacker, self, vector);
                     return new Tuple<JobHandle, NativeArray<NonNullLeaser>>(jobHandle, leasers);
                 });
         Logger.LogDebug("ok1");
@@ -379,7 +409,7 @@ sealed class Plugin : BaseUnityPlugin
         {
             leasers[i] = new NonNullLeaser() { sLeaser = leaserList[i], rCam = self };
         }
-        JobHandle jobHandle = seedcobDrawJobInstance.Update(leasers, timeStacker, self, vector);
+        JobHandle jobHandle = seedcobParallelInstance.Update(leasers, timeStacker, self, vector);
 
         for (int i = 0; i < self.singleCameraDrawables.Count; i++)
         {
@@ -509,15 +539,14 @@ sealed class Plugin : BaseUnityPlugin
     }
 }
 
-class SeedcobDrawJob : MonoBehaviour
+class SeedcobDrawSpriteParallel : MonoBehaviour
 {
     struct DrawJob : Unity.Jobs.IJobParallelFor
     {
         [ReadOnly]
         public NativeArray<Fastcob.Plugin.NonNullLeaser> leasers;
-        [ReadOnly]
+
         public float timeStacker;
-        [ReadOnly]
         public Vector2 camPos;
 
         public void Execute(int index)
@@ -675,9 +704,10 @@ class FSpritePopulateRenderLayerJob : MonoBehaviour
 
         public void Execute(int index)
         {
-            if (sprites[index].sprite != null)
+            FSprite sprite = sprites[index].sprite;
+            if (sprite != null && sprite._renderLayer != null)
             {
-                Populate(sprites[index].sprite);
+                Populate(sprite);
             }
         }
     }
