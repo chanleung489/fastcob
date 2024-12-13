@@ -5,13 +5,8 @@ using Unity.Collections;
 using Unity.Jobs;
 using RWCustom;
 using System.Collections.Generic;
-using System;
-using Mono.Cecil.Cil;
-using MonoMod.Cil;
 using Unity.Profiling;
-using System.Reflection;
-using System.Collections.Concurrent;
-
+using Unity.Mathematics;
 
 // Allows access to private members
 #pragma warning disable CS0618
@@ -32,133 +27,99 @@ sealed class Plugin : BaseUnityPlugin
         public RoomCamera.SpriteLeaser sLeaser;
         public RoomCamera rCam;
     }
-    public struct NonNullFSprite
-    {
-        public FSprite sprite;
-    }
 
     bool init;
     SeedcobDrawSpriteParallel seedcobParallelInstance = new SeedcobDrawSpriteParallel();
-    // public ConcurrentQueue<System.Action> callAtMainThread = new ConcurrentQueue<Action>();
     public static new BepInEx.Logging.ManualLogSource Logger;
 
-    static readonly ProfilerMarker s_FutileMarker = new ProfilerMarker("Futile_Update_profile");
     static readonly ProfilerMarker marker1 = new ProfilerMarker("marker1");
     static readonly ProfilerMarker marker2 = new ProfilerMarker("marker2");
-    static readonly ProfilerMarker marker3 = new ProfilerMarker("marker3");
-    static readonly ProfilerMarker marker4 = new ProfilerMarker("marker4");
-    static readonly ProfilerMarker marker5 = new ProfilerMarker("marker5");
 
     public void OnEnable()
     {
         Logger = base.Logger;
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
-        On.RainWorld.Update += OnGameUpdate;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
-        // On.Futile.Update += OnFutileUpdate;
         On.FStage.Redraw += OnFStageRedraw;
-        On.FContainer.Redraw += OnFContainerRedraw;
-        // On.FSprite.Redraw += OnFSpriteRedraw;
+        On.FSprite.PopulateRenderLayer += OnFspritePopulate;
+        // On.FMatrix.ApplyVector3FromLocalVector2 += onApplyVector;
+    }
 
-        try
+    private Vector3 ApplyVector3FromLocalVector2(Vector2 localVector, float z, float4x4 transformationMatrix)
+    {
+        float4 result = math.mul(new float4(localVector.x, localVector.y, 0, 1), transformationMatrix);
+        return new Vector3(result.x, result.y, z);
+    }
+
+    private void OnFspritePopulate(On.FSprite.orig_PopulateRenderLayer orig, FSprite sprite)
+    {
+        if (sprite._isOnStage && sprite._firstFacetIndex != -1)
         {
-            // IL.Futile.Update += Futile_Update;
-            // IL.RoomCamera.DrawUpdate += RoomCamera_DrawUpdate;
-        }
-        catch (Exception e)
-        {
-            Debug.LogError(e.ToString());
-            Logger.LogError(e);
+            sprite._isMeshDirty = false;
+            Vector3[] vertices = sprite._renderLayer.vertices;
+            Vector2[] uvs = sprite._renderLayer.uvs;
+            Color[] colors = sprite._renderLayer.colors;
+            FMatrix matrix = sprite._concatenatedMatrix;
+            float4x4 transformationMatrix = new float4x4(matrix.a, matrix.b, 0, matrix.tx, matrix.c, matrix.d, 0, matrix.ty, 0, 0, 1, 0, 0, 0, 0, 1);
+            if (sprite._facetTypeQuad)
+            {
+                int num = sprite._firstFacetIndex * 4;
+                int num2 = num + 1;
+                int num3 = num + 2;
+                int num4 = num + 3;
+                vertices[num] = ApplyVector3FromLocalVector2(sprite._localVertices[0], sprite._meshZ, transformationMatrix);
+                vertices[num2] = ApplyVector3FromLocalVector2(sprite._localVertices[1], sprite._meshZ, transformationMatrix);
+                vertices[num3] = ApplyVector3FromLocalVector2(sprite._localVertices[2], sprite._meshZ, transformationMatrix);
+                vertices[num4] = ApplyVector3FromLocalVector2(sprite._localVertices[3], sprite._meshZ, transformationMatrix);
+                uvs[num] = sprite._element.uvTopLeft;
+                uvs[num2] = sprite._element.uvTopRight;
+                uvs[num3] = sprite._element.uvBottomRight;
+                uvs[num4] = sprite._element.uvBottomLeft;
+                colors[num] = sprite._alphaColor;
+                colors[num2] = sprite._alphaColor;
+                colors[num3] = sprite._alphaColor;
+                colors[num4] = sprite._alphaColor;
+            }
+            else
+            {
+                int num5 = sprite._firstFacetIndex * 3;
+                int num6 = num5 + 1;
+                int num7 = num5 + 2;
+                int num8 = num5 + 3;
+                int num9 = num5 + 4;
+                int num10 = num5 + 5;
+                vertices[num5] = ApplyVector3FromLocalVector2(sprite._localVertices[0], sprite._meshZ, transformationMatrix);
+                vertices[num6] = ApplyVector3FromLocalVector2(sprite._localVertices[1], sprite._meshZ, transformationMatrix);
+                vertices[num7] = ApplyVector3FromLocalVector2(sprite._localVertices[2], sprite._meshZ, transformationMatrix);
+                vertices[num8] = ApplyVector3FromLocalVector2(sprite._localVertices[0], sprite._meshZ, transformationMatrix);
+                vertices[num9] = ApplyVector3FromLocalVector2(sprite._localVertices[2], sprite._meshZ, transformationMatrix);
+                vertices[num10] = ApplyVector3FromLocalVector2(sprite._localVertices[3], sprite._meshZ, transformationMatrix);
+                uvs[num5] = sprite._element.uvTopLeft;
+                uvs[num6] = sprite._element.uvTopRight;
+                uvs[num7] = sprite._element.uvBottomRight;
+                uvs[num8] = sprite._element.uvTopLeft;
+                uvs[num9] = sprite._element.uvBottomRight;
+                uvs[num10] = sprite._element.uvBottomLeft;
+                colors[num5] = sprite._alphaColor;
+                colors[num6] = sprite._alphaColor;
+                colors[num7] = sprite._alphaColor;
+                colors[num8] = sprite._alphaColor;
+                colors[num9] = sprite._alphaColor;
+                colors[num10] = sprite._alphaColor;
+            }
+            sprite._renderLayer.HandleVertsChange();
         }
     }
 
-    private void OnFContainerRedraw(On.FContainer.orig_Redraw orig, FContainer self, bool shouldForceDirty, bool shouldUpdateDepth)
+    private void onApplyVector(On.FMatrix.orig_ApplyVector3FromLocalVector2 orig, FMatrix self, ref Vector3 outVector, Vector2 localVector, float z)
     {
         using (marker2.Auto())
         {
-            orig(self, shouldForceDirty, shouldUpdateDepth);
+            outVector.x = localVector.x * self.a + localVector.y * self.c + self.tx;
+            outVector.y = localVector.x * self.b + localVector.y * self.d + self.ty;
+            outVector.z = z;
         }
-        return;
-        bool isMatrixDirty = self._isMatrixDirty;
-        bool isAlphaDirty = self._isAlphaDirty;
-        self.UpdateDepthMatrixAlpha(shouldForceDirty, shouldUpdateDepth);
-        int count = self._childNodes.Count;
-        List<FSprite> spriteList = new List<FSprite>();
-        for (int i = 0; i < count; i++)
-        {
-            self._childNodes[i].Redraw(shouldForceDirty || isAlphaDirty, shouldUpdateDepth);
-            if (self._childNodes[i] is FSprite)
-            {
-                FSprite sprite = self._childNodes[i] as FSprite;
-                if (sprite._isMeshDirty && sprite._isOnStage && sprite._firstFacetIndex != -1)
-                {
-                    spriteList.Add(sprite);
-                }
-            }
-        }
-        var sprites = new NativeArray<NonNullFSprite>(spriteList.Count, Allocator.Temp);
-        for (int i = 0; i < spriteList.Count; i++)
-        {
-            sprites[i] = new NonNullFSprite() { sprite = spriteList[i] };
-        }
-        var job = new FSpritePopulateRenderLayerJob.PopulateJob()
-        {
-            sprites = sprites,
-        };
-        JobHandle jobHandle = job.Schedule(count, 16);
-        jobHandle.Complete();
-        sprites.Dispose();
-        // return;
-        // for (int i = 0; i < count; i++)
-        // {
-        //     FNode node = self._childNodes[i];
-        //     switch (node)
-        //     {
-        //         case FSprite sprite:
-        //             using (marker3.Auto())
-        //             {
-        //
-        //                 sprite.Redraw(shouldForceDirty, shouldUpdateDepth);
-        //             }
-        //             break;
-        //         case FStage stage:
-        //             using (marker5.Auto())
-        //             {
-        //
-        //                 stage.Redraw(shouldForceDirty, shouldUpdateDepth);
-        //             }
-        //             break;
-        //         case FLabel label:
-        //             using (marker4.Auto())
-        //             {
-        //
-        //                 label.Redraw(shouldForceDirty, shouldUpdateDepth);
-        //             }
-        //             break;
-        //         case FContainer container:
-        //             using (marker2.Auto())
-        //             {
-        //
-        //                 container.Redraw(shouldForceDirty, shouldUpdateDepth);
-        //             }
-        //             break;
-        //         default:
-        //             node.Redraw(shouldForceDirty || isMatrixDirty || isAlphaDirty, shouldUpdateDepth);
-        //             break;
-        //     }
-        // }
-    }
-
-    private void OnGameUpdate(On.RainWorld.orig_Update orig, RainWorld self)
-
-    {
-        orig(self);
-        // Action action;
-        // while (callAtMainThread.TryDequeue(out action))
-        // {
-        //     action.Invoke();
-        // }
     }
 
     private void OnFStageRedraw(On.FStage.orig_Redraw orig, FStage self, bool shouldForceDirty, bool shouldUpdateDepth)
@@ -198,117 +159,6 @@ sealed class Plugin : BaseUnityPlugin
             }
         }
 
-        // stagesList.Add(self);
-    }
-
-    private void RoomCamera_DrawUpdate(ILContext il)
-    {
-        var cursor = new ILCursor(il);
-        Logger.LogDebug(il);
-
-        cursor.GotoNext(
-                x => x.MatchLdfld<RoomCamera.SpriteLeaser>(nameof(RoomCamera.SpriteLeaser.deleteMeNextFrame))
-                );
-        Instruction inst = (Instruction)cursor.Next;
-        cursor.GotoPrev(
-                x => x.MatchLdarg(0),
-                x => x.MatchLdfld<RoomCamera>(nameof(RoomCamera.spriteLeasers))
-                );
-        cursor.Index -= 15;
-        cursor.Emit(OpCodes.Ldarg_0);
-        cursor.Emit(OpCodes.Ldarg_1);
-        cursor.Emit(OpCodes.Ldloc_0);
-        cursor.EmitDelegate<Func<float, RoomCamera, Vector2, Tuple<JobHandle, NativeArray<NonNullLeaser>>>>((float timeStacker, RoomCamera self, Vector2 vector) =>
-                {
-                    List<RoomCamera.SpriteLeaser> leaserList = new List<RoomCamera.SpriteLeaser>();
-
-                    for (int num = self.spriteLeasers.Count - 1; num >= 0; num--)
-                    {
-                        if (self.spriteLeasers[num].drawableObject is SeedCob)
-                        {
-                            leaserList.Add(self.spriteLeasers[num]);
-                        }
-                        else
-                        {
-                            self.spriteLeasers[num].Update(timeStacker, self, vector);
-                        }
-                        if (self.spriteLeasers[num].deleteMeNextFrame)
-                        {
-                            self.spriteLeasers.RemoveAt(num);
-                        }
-                    }
-                    var leasers = new NativeArray<NonNullLeaser>(leaserList.Count, Allocator.Temp);
-                    for (int i = 0; i < leaserList.Count; i++)
-                    {
-                        leasers[i] = new NonNullLeaser() { sLeaser = leaserList[i], rCam = self };
-                    }
-                    JobHandle jobHandle = seedcobParallelInstance.Update(leasers, timeStacker, self, vector);
-                    return new Tuple<JobHandle, NativeArray<NonNullLeaser>>(jobHandle, leasers);
-                });
-        Logger.LogDebug("ok1");
-        var a = Mono.Cecil.AssemblyDefinition.ReadAssembly(typeof(Tuple<JobHandle, NativeArray<NonNullLeaser>>).Assembly.Location);
-        var type = typeof(Tuple<JobHandle, NativeArray<NonNullLeaser>>);
-        var tr = a.MainModule.ImportReference(type);
-        var td = tr.Resolve();
-        cursor.IL.Body.Variables.Add(new VariableDefinition(td));
-        // CecilILGenerator ilGen = new CecilILGenerator(cursor.IL);
-        // System.Reflection.Emit.LocalBuilder local = ilGen.DeclareLocal(typeof(Tuple<JobHandle, NativeArray<NonNullLeaser>>));
-        cursor.Emit(OpCodes.Stloc, 7);
-        Logger.LogDebug("ok2");
-        cursor.Emit(OpCodes.Br, inst);
-
-        cursor.GotoNext(
-                x => x.MatchSub(),
-                x => x.MatchCall<UnityEngine.Shader>(nameof(UnityEngine.Shader.SetGlobalFloat))
-                );
-        cursor.Index += 2;
-        cursor.Emit(OpCodes.Ldloc, 7);
-        cursor.EmitDelegate<Action<Tuple<JobHandle, NativeArray<NonNullLeaser>>>>((Tuple<JobHandle, NativeArray<NonNullLeaser>> tuple) =>
-                {
-                    tuple.Item1.Complete();
-                    tuple.Item2.Dispose();
-                });
-        Logger.LogDebug(il);
-        // foreach (var item in cursor.IL.Body.Variables)
-        // {
-        //     Logger.LogDebug(item);
-        //     Logger.LogDebug(item.VariableType);
-        // }
-    }
-
-    private void Futile_Update(ILContext il)
-    {
-        var cursor = new ILCursor(il);
-        Logger.LogDebug(il);
-
-        cursor.GotoNext(
-                x => x.MatchLdarg(0),
-                x => x.MatchCall<Futile>(nameof(Futile.ProcessDelayedCallbacks))
-                );
-        FieldInfo markerField = typeof(Plugin).GetField(nameof(Plugin.s_FutileMarker), BindingFlags.Static | BindingFlags.NonPublic);
-        cursor.Emit(OpCodes.Ldsfld, markerField); // push to stack
-        cursor.Emit(OpCodes.Stloc_1); // pop off stack, place at local var 1
-        cursor.Emit(OpCodes.Ldloca_S, (byte)1); // push addr local var 1 to stack
-        cursor.Emit(OpCodes.Call, typeof(ProfilerMarker).GetMethod(nameof(ProfilerMarker.Auto)));
-        cursor.Emit(OpCodes.Stloc, 4);
-        cursor.Emit(OpCodes.Nop);
-        Logger.LogDebug(il);
-
-        cursor.GotoNext(
-                x => x.MatchNop(),
-                x => x.MatchNop(),
-                x => x.MatchRet()
-                );
-        cursor.Index += 2;
-        Instruction inst = (Instruction)cursor.Next;
-        cursor.Index -= 1;
-        cursor.Emit(OpCodes.Leave_S, inst);
-        cursor.Emit(OpCodes.Ldloca_S, (byte)4);
-        cursor.Emit(OpCodes.Constrained, typeof(ProfilerMarker.AutoScope));
-        cursor.Emit(OpCodes.Callvirt, typeof(IDisposable).GetMethod(nameof(IDisposable.Dispose)));
-        cursor.Emit(OpCodes.Nop);
-        cursor.Emit(OpCodes.Endfinally);
-        Logger.LogDebug(il);
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
@@ -692,78 +542,5 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
             sLeaser.CleanSpritesAndRemove();
         }
 
-    }
-}
-
-class FSpritePopulateRenderLayerJob : MonoBehaviour
-{
-    public struct PopulateJob : IJobParallelFor
-    {
-        [ReadOnly]
-        public NativeArray<Fastcob.Plugin.NonNullFSprite> sprites;
-
-        public void Execute(int index)
-        {
-            FSprite sprite = sprites[index].sprite;
-            if (sprite != null && sprite._renderLayer != null)
-            {
-                Populate(sprite);
-            }
-        }
-    }
-
-    private static void Populate(FSprite self)
-    {
-        self._isMeshDirty = false;
-        Vector3[] vertices = self._renderLayer.vertices;
-        Vector2[] uvs = self._renderLayer.uvs;
-        Color[] colors = self._renderLayer.colors;
-        if (self._facetTypeQuad)
-        {
-            int num = self._firstFacetIndex * 4;
-            int num2 = num + 1;
-            int num3 = num + 2;
-            int num4 = num + 3;
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num], self._localVertices[0], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num2], self._localVertices[1], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num3], self._localVertices[2], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num4], self._localVertices[3], self._meshZ);
-            uvs[num] = self._element.uvTopLeft;
-            uvs[num2] = self._element.uvTopRight;
-            uvs[num3] = self._element.uvBottomRight;
-            uvs[num4] = self._element.uvBottomLeft;
-            colors[num] = self._alphaColor;
-            colors[num2] = self._alphaColor;
-            colors[num3] = self._alphaColor;
-            colors[num4] = self._alphaColor;
-        }
-        else
-        {
-            int num5 = self._firstFacetIndex * 3;
-            int num6 = num5 + 1;
-            int num7 = num5 + 2;
-            int num8 = num5 + 3;
-            int num9 = num5 + 4;
-            int num10 = num5 + 5;
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num5], self._localVertices[0], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num6], self._localVertices[1], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num7], self._localVertices[2], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num8], self._localVertices[0], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num9], self._localVertices[2], self._meshZ);
-            self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref vertices[num10], self._localVertices[3], self._meshZ);
-            uvs[num5] = self._element.uvTopLeft;
-            uvs[num6] = self._element.uvTopRight;
-            uvs[num7] = self._element.uvBottomRight;
-            uvs[num8] = self._element.uvTopLeft;
-            uvs[num9] = self._element.uvBottomRight;
-            uvs[num10] = self._element.uvBottomLeft;
-            colors[num5] = self._alphaColor;
-            colors[num6] = self._alphaColor;
-            colors[num7] = self._alphaColor;
-            colors[num8] = self._alphaColor;
-            colors[num9] = self._alphaColor;
-            colors[num10] = self._alphaColor;
-        }
-        self._renderLayer.HandleVertsChange();
     }
 }
