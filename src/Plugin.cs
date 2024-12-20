@@ -5,9 +5,6 @@ using Unity.Collections;
 using Unity.Jobs;
 using RWCustom;
 using System.Collections.Generic;
-using Unity.Profiling;
-using System;
-using Unity.Mathematics;
 
 // Allows access to private members
 #pragma warning disable CS0618
@@ -33,142 +30,12 @@ sealed class Plugin : BaseUnityPlugin
     SeedcobDrawSpriteParallel seedcobParallelInstance = new SeedcobDrawSpriteParallel();
     public static new BepInEx.Logging.ManualLogSource Logger;
 
-    static readonly ProfilerMarker fstage = new ProfilerMarker("fstage");
-    static readonly ProfilerMarker fcontainer = new ProfilerMarker("fcontainer");
-    static readonly ProfilerMarker fsprite = new ProfilerMarker("fsprite");
-    static readonly ProfilerMarker calmatrix = new ProfilerMarker("matrix");
-    static readonly ProfilerMarker prlTriMesh = new ProfilerMarker("prlTriMesh");
-    static readonly ProfilerMarker uda = new ProfilerMarker("uda");
-    static readonly ProfilerMarker redraw = new ProfilerMarker("redraw");
-
     public void OnEnable()
     {
         Logger = base.Logger;
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
-        On.FContainer.Redraw += OnFContainerRedraw;
-        // On.FSprite.PopulateRenderLayer += OnFSpritePopulate;
-        On.TriangleMesh.PopulateRenderLayer += OnTriagleMeshPopulate;
-    }
-
-    private Vector3 ApplyVector3FromLocalVector2(Vector2 localVector, float z, float a, float b, float c, float d, float tx, float ty)
-    {
-        Vector3 result = Vector3.zero;
-        result.x = localVector.x * a + localVector.y * c + tx;
-        result.y = localVector.x * b + localVector.y * d + ty;
-        result.z = z;
-        return result;
-    }
-
-    private void OnTriagleMeshPopulate(On.TriangleMesh.orig_PopulateRenderLayer orig, TriangleMesh self)
-    {
-        if (self._isOnStage && self._firstFacetIndex != -1)
-        {
-            self._isMeshDirty = false;
-            int num = self._firstFacetIndex * 3;
-            Vector3[] array = self._renderLayer.vertices;
-            Vector2[] uvs = self._renderLayer.uvs;
-            Color[] colors = self._renderLayer.colors;
-            FMatrix matrix = self._concatenatedMatrix;
-            if (self.customColor)
-            {
-                for (int i = 0; i < self.triangles.Length; i++)
-                {
-                    for (int j = 0; j < 3; j++)
-                    {
-                        colors[num + i * 3 + j] = self.verticeColors[self.triangles[i].GetAt(j)];
-                    }
-                }
-            }
-            else
-            {
-                for (int k = 0; k < self.triangles.Length * 3; k++)
-                {
-                    colors[num + k] = self._alphaColor;
-                }
-            }
-            // int num2 = 0;
-            // for (int l = 0; l < self.triangles.Length; l++)
-            // {
-            //     array[num + num2] = ApplyVector3FromLocalVector2(self.vertices[self.triangles[l].a], self._meshZ, matrix.a, matrix.b, matrix.c, matrix.d, matrix.tx, matrix.ty);
-            //     // self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref array[num + num2], self.vertices[self.triangles[l].a], 0f);
-            //     uvs[num + num2] = self.UVvertices[self.triangles[l].a];
-            //     num2++;
-            //
-            //     array[num + num2] = ApplyVector3FromLocalVector2(self.vertices[self.triangles[l].b], self._meshZ, matrix.a, matrix.b, matrix.c, matrix.d, matrix.tx, matrix.ty);
-            //     // self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref array[num + num2], self.vertices[self.triangles[l].b], 0f);
-            //     uvs[num + num2] = self.UVvertices[self.triangles[l].b];
-            //     num2++;
-            //
-            //     array[num + num2] = ApplyVector3FromLocalVector2(self.vertices[self.triangles[l].c], self._meshZ, matrix.a, matrix.b, matrix.c, matrix.d, matrix.tx, matrix.ty);
-            //     // self._concatenatedMatrix.ApplyVector3FromLocalVector2(ref array[num + num2], self.vertices[self.triangles[l].c], 0f);
-            //     uvs[num + num2] = self.UVvertices[self.triangles[l].c];
-            //     num2++;
-            // }
-            NativeArray<Vector2> localVertices = new NativeArray<Vector2>(self.triangles.Length * 3, Allocator.Temp);
-            NativeArray<Vector3> resultVertices = new NativeArray<Vector3>(localVertices.Length, Allocator.Temp);
-            int num2 = 0;
-            for (int i = 0; i < self.triangles.Length; i++)
-            {
-                localVertices[i + num2] = self.vertices[self.triangles[i].a];
-                num2++;
-                localVertices[i + num2] = self.vertices[self.triangles[i].b];
-                num2++;
-                localVertices[i + num2] = self.vertices[self.triangles[i].c];
-                num2++;
-            }
-            var job = new TransformVectorParallel.TransformJob()
-            {
-                localVertices = localVertices,
-                a = matrix.a,
-                b = matrix.b,
-                c = matrix.c,
-                d = matrix.d,
-                tx = matrix.tx,
-                ty = matrix.ty,
-                z = self._meshZ,
-                resultVertices = resultVertices
-            };
-            JobHandle jobHandle = job.Schedule(resultVertices.Length, 32);
-            jobHandle.Complete();
-            for (int i = 0; i < self.triangles.Length * 3; i++)
-            {
-                array[i] = resultVertices[i];
-            }
-            self._renderLayer.HandleVertsChange();
-            localVertices.Dispose();
-            resultVertices.Dispose();
-        }
-    }
-
-    private void OnFSpriteRedraw(On.FSprite.orig_Redraw orig, FSprite self, bool shouldForceDirty, bool shouldUpdateDepth)
-    {
-        using (fsprite.Auto())
-        {
-            orig(self, shouldForceDirty, shouldUpdateDepth);
-        }
-    }
-
-    private void OnFContainerRedraw(On.FContainer.orig_Redraw orig, FContainer self, bool shouldForceDirty, bool shouldUpdateDepth)
-    {
-        using (fcontainer.Auto())
-        {
-            bool isMatrixDirty = self._isMatrixDirty;
-            bool isAlphaDirty = self._isAlphaDirty;
-            using (uda.Auto())
-            {
-                self.UpdateDepthMatrixAlpha(shouldForceDirty, shouldUpdateDepth);
-            }
-            int count = self._childNodes.Count;
-            using (redraw.Auto())
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    self._childNodes[i].Redraw(shouldForceDirty || isMatrixDirty || isAlphaDirty, shouldUpdateDepth);
-                }
-            }
-        }
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
@@ -552,40 +419,5 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
             sLeaser.CleanSpritesAndRemove();
         }
 
-    }
-}
-class TransformVectorParallel : MonoBehaviour
-{
-    public struct TransformJob : Unity.Jobs.IJobParallelFor
-    {
-        [ReadOnly]
-        public NativeArray<Vector2> localVertices;
-        [ReadOnly]
-        public float a;
-        [ReadOnly]
-        public float b;
-        [ReadOnly]
-        public float c;
-        [ReadOnly]
-        public float d;
-        [ReadOnly]
-        public float tx;
-        [ReadOnly]
-        public float ty;
-        [ReadOnly]
-        public float z;
-
-        [WriteOnly]
-        public NativeArray<Vector3> resultVertices;
-
-        public void Execute(int index)
-        {
-            Vector2 localVector = localVertices[index];
-            Vector3 result = Vector3.zero;
-            result.x = localVector.x * a + localVector.y * c + tx;
-            result.y = localVector.x * b + localVector.y * d + ty;
-            result.z = z;
-            resultVertices[index] = result;
-        }
     }
 }
