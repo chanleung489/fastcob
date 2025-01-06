@@ -36,6 +36,13 @@ sealed class Plugin : BaseUnityPlugin
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
+        On.SeedCob.PlaceInRoom += OnPlaceSeedcob;
+    }
+
+    private void OnPlaceSeedcob(On.SeedCob.orig_PlaceInRoom orig, SeedCob self, Room placeRoom)
+    {
+        orig(self, placeRoom);
+		self.stalkSegments = 10;
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
@@ -316,14 +323,29 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
             float num3 = Mathf.Lerp(cob.bodyChunkConnections[0].distance / 14f, 1.5f, Mathf.Pow(Mathf.Sin(Mathf.Pow(f, 2f) * (float)Mathf.PI), 0.5f));
             float num4 = 1f;
             Vector2 vector6 = default(Vector2);
-            for (int j = 0; j < 2; j++)
+            if (i + 2 >= cob.stalkSegments)
             {
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6);
-                num4 = 0.35f;
-                vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                for (int j = 0; j < 2; j++)
+                {
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6 + Vector2.up*25);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6 + Vector2.up*20);
+                    num4 = 0.35f;
+                    vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                }
+            }
+            else
+            {
+                for (int j = 0; j < 2; j++)
+                {
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6);
+                    num4 = 0.35f;
+                    vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                }
             }
             vector3 = vector4;
             num = num3;
