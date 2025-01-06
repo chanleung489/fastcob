@@ -18,7 +18,7 @@ sealed class Plugin : BaseUnityPlugin
 {
     public const string PLUGIN_GUID = "znery.fastcob";
     public const string PLUGIN_NAME = "Fastcob";
-    public const string PLUGIN_VERSION = "0.1.99";
+    public const string PLUGIN_VERSION = "0.2.0";
 
     public struct NonNullLeaser
     {
@@ -42,7 +42,10 @@ sealed class Plugin : BaseUnityPlugin
     private void OnPlaceSeedcob(On.SeedCob.orig_PlaceInRoom orig, SeedCob self, Room placeRoom)
     {
         orig(self, placeRoom);
-		self.stalkSegments = 10;
+        if (FastcobOptions.LQStalks.Value)
+        {
+            self.stalkSegments = 10;
+        }
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
@@ -143,7 +146,14 @@ sealed class Plugin : BaseUnityPlugin
         {
             leasers[i] = new NonNullLeaser() { sLeaser = leaserList[i], rCam = self };
         }
-        JobHandle jobHandle = seedcobParallelInstance.Update(leasers, timeStacker, self, vector);
+        var job = new SeedcobDrawSpriteParallel.DrawJob()
+        {
+            timeStacker = timeStacker,
+            camPos = vector,
+            leasers = leasers,
+            lqStalks = FastcobOptions.LQStalks.Value
+        };
+        JobHandle jobHandle = job.Schedule(leasers.Length, 4);
 
         for (int i = 0; i < self.singleCameraDrawables.Count; i++)
         {
@@ -263,45 +273,38 @@ sealed class Plugin : BaseUnityPlugin
     {
         orig(self);
 
-        // MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
-        // Logger.LogDebug("Options");
-        // Logger.LogDebug("skipRender: " + FastcobOptions.skipRendering.Value);
+        MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
+        Logger.LogDebug("Options");
+        Logger.LogDebug("LQStalks: " + FastcobOptions.LQStalks.Value);
 
         if (init) return;
         init = true;
-        Logger.LogDebug("1Init");
+        Logger.LogDebug("Init");
     }
 }
 
 class SeedcobDrawSpriteParallel : MonoBehaviour
 {
-    struct DrawJob : Unity.Jobs.IJobParallelFor
+    public struct DrawJob : Unity.Jobs.IJobParallelFor
     {
         [ReadOnly]
         public NativeArray<Fastcob.Plugin.NonNullLeaser> leasers;
 
+        [ReadOnly]
         public float timeStacker;
+        [ReadOnly]
         public Vector2 camPos;
+        [ReadOnly]
+        public bool lqStalks;
 
         public void Execute(int index)
         {
             Fastcob.Plugin.NonNullLeaser leaser = leasers[index];
-            drawSeedCob((SeedCob)leaser.sLeaser.drawableObject, leaser.sLeaser, leaser.rCam, timeStacker, camPos);
+            drawSeedCob((SeedCob)leaser.sLeaser.drawableObject, leaser.sLeaser, leaser.rCam, timeStacker, camPos, lqStalks);
         }
     }
 
-    public JobHandle Update(NativeArray<Fastcob.Plugin.NonNullLeaser> leasers, float timeStacker, RoomCamera rCam, Vector2 camPos)
-    {
-        var job = new DrawJob()
-        {
-            timeStacker = timeStacker,
-            camPos = camPos,
-            leasers = leasers
-        };
-        return job.Schedule(leasers.Length, 4);
-    }
-
-    private static void drawSeedCob(SeedCob cob, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos)
+    private static void drawSeedCob(SeedCob cob, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos, bool lqStalks)
     {
 
         PhysicalObject physicalCob = cob as PhysicalObject;
@@ -323,7 +326,7 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
             float num3 = Mathf.Lerp(cob.bodyChunkConnections[0].distance / 14f, 1.5f, Mathf.Pow(Mathf.Sin(Mathf.Pow(f, 2f) * (float)Mathf.PI), 0.5f));
             float num4 = 1f;
             Vector2 vector6 = default(Vector2);
-            if (i + 2 >= cob.stalkSegments)
+            if (lqStalks && i + 2 >= cob.stalkSegments)
             {
                 for (int j = 0; j < 2; j++)
                 {
