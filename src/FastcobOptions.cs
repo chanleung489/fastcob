@@ -22,7 +22,7 @@ sealed class FastcobOptions : OptionInterface
         LQStalks = this.config.Bind<bool>(
             key: "lqstalks",
             defaultValue: false,
-            info: new ConfigurableInfo("Replace the tip of seedcob stalks with a rectangle to reduce mesh count")
+            info: new ConfigurableInfo("Replace the tip of seedcob stalks with a simple mesh to reduce mesh count")
         );
 
     }

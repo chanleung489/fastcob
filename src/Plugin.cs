@@ -5,6 +5,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using RWCustom;
 using System.Collections.Generic;
+using System;
 
 // Allows access to private members
 #pragma warning disable CS0618
@@ -332,8 +333,9 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
                 {
                     (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
                     (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
-                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6 + Vector2.up*25);
-                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6 + Vector2.up*20);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, physicalCob.bodyChunks[1].lastPos - camPos);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, physicalCob.bodyChunks[1].lastPos - camPos + Vector2.one * 2.5f);
+
                     num4 = 0.35f;
                     vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
                 }
