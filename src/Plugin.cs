@@ -5,6 +5,7 @@ using Unity.Collections;
 using Unity.Jobs;
 using RWCustom;
 using System.Collections.Generic;
+using System;
 
 // Allows access to private members
 #pragma warning disable CS0618
@@ -18,7 +19,7 @@ sealed class Plugin : BaseUnityPlugin
 {
     public const string PLUGIN_GUID = "znery.fastcob";
     public const string PLUGIN_NAME = "Fastcob";
-    public const string PLUGIN_VERSION = "0.1.99";
+    public const string PLUGIN_VERSION = "0.2.0";
 
     public struct NonNullLeaser
     {
@@ -36,6 +37,16 @@ sealed class Plugin : BaseUnityPlugin
         // Add hooks here
         On.RainWorld.OnModsInit += OnModsInit;
         On.RoomCamera.DrawUpdate += OnDrawUpdate;
+        On.SeedCob.PlaceInRoom += OnPlaceSeedcob;
+    }
+
+    private void OnPlaceSeedcob(On.SeedCob.orig_PlaceInRoom orig, SeedCob self, Room placeRoom)
+    {
+        orig(self, placeRoom);
+        if (FastcobOptions.LQStalks.Value)
+        {
+            self.stalkSegments = 10;
+        }
     }
 
     private void OnDrawUpdate(On.RoomCamera.orig_DrawUpdate orig, RoomCamera self, float timeStacker, float timeSpeed)
@@ -136,7 +147,14 @@ sealed class Plugin : BaseUnityPlugin
         {
             leasers[i] = new NonNullLeaser() { sLeaser = leaserList[i], rCam = self };
         }
-        JobHandle jobHandle = seedcobParallelInstance.Update(leasers, timeStacker, self, vector);
+        var job = new SeedcobDrawSpriteParallel.DrawJob()
+        {
+            timeStacker = timeStacker,
+            camPos = vector,
+            leasers = leasers,
+            lqStalks = FastcobOptions.LQStalks.Value
+        };
+        JobHandle jobHandle = job.Schedule(leasers.Length, 4);
 
         for (int i = 0; i < self.singleCameraDrawables.Count; i++)
         {
@@ -256,45 +274,38 @@ sealed class Plugin : BaseUnityPlugin
     {
         orig(self);
 
-        // MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
-        // Logger.LogDebug("Options");
-        // Logger.LogDebug("skipRender: " + FastcobOptions.skipRendering.Value);
+        MachineConnector.SetRegisteredOI(PLUGIN_GUID, new FastcobOptions());
+        Logger.LogDebug("Options");
+        Logger.LogDebug("LQStalks: " + FastcobOptions.LQStalks.Value);
 
         if (init) return;
         init = true;
-        Logger.LogDebug("1Init");
+        Logger.LogDebug("Init");
     }
 }
 
 class SeedcobDrawSpriteParallel : MonoBehaviour
 {
-    struct DrawJob : Unity.Jobs.IJobParallelFor
+    public struct DrawJob : Unity.Jobs.IJobParallelFor
     {
         [ReadOnly]
         public NativeArray<Fastcob.Plugin.NonNullLeaser> leasers;
 
+        [ReadOnly]
         public float timeStacker;
+        [ReadOnly]
         public Vector2 camPos;
+        [ReadOnly]
+        public bool lqStalks;
 
         public void Execute(int index)
         {
             Fastcob.Plugin.NonNullLeaser leaser = leasers[index];
-            drawSeedCob((SeedCob)leaser.sLeaser.drawableObject, leaser.sLeaser, leaser.rCam, timeStacker, camPos);
+            drawSeedCob((SeedCob)leaser.sLeaser.drawableObject, leaser.sLeaser, leaser.rCam, timeStacker, camPos, lqStalks);
         }
     }
 
-    public JobHandle Update(NativeArray<Fastcob.Plugin.NonNullLeaser> leasers, float timeStacker, RoomCamera rCam, Vector2 camPos)
-    {
-        var job = new DrawJob()
-        {
-            timeStacker = timeStacker,
-            camPos = camPos,
-            leasers = leasers
-        };
-        return job.Schedule(leasers.Length, 4);
-    }
-
-    private static void drawSeedCob(SeedCob cob, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos)
+    private static void drawSeedCob(SeedCob cob, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, Vector2 camPos, bool lqStalks)
     {
 
         PhysicalObject physicalCob = cob as PhysicalObject;
@@ -316,14 +327,30 @@ class SeedcobDrawSpriteParallel : MonoBehaviour
             float num3 = Mathf.Lerp(cob.bodyChunkConnections[0].distance / 14f, 1.5f, Mathf.Pow(Mathf.Sin(Mathf.Pow(f, 2f) * (float)Mathf.PI), 0.5f));
             float num4 = 1f;
             Vector2 vector6 = default(Vector2);
-            for (int j = 0; j < 2; j++)
+            if (lqStalks && i + 2 >= cob.stalkSegments)
             {
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6);
-                (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6);
-                num4 = 0.35f;
-                vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                for (int j = 0; j < 2; j++)
+                {
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, physicalCob.bodyChunks[1].lastPos - camPos);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, physicalCob.bodyChunks[1].lastPos - camPos + Vector2.one * 2.5f);
+
+                    num4 = 0.35f;
+                    vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                }
+            }
+            else
+            {
+                for (int j = 0; j < 2; j++)
+                {
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4, vector3 - normalized * num2 - vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 1, vector3 - normalized * num2 + vector5 * (num3 + num) * 0.5f * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 2, vector4 + normalized * num2 - vector5 * num3 * num4 - camPos + vector6);
+                    (sLeaser.sprites[cob.StalkSprite(j)] as TriangleMesh).MoveVertice(i * 4 + 3, vector4 + normalized * num2 + vector5 * num3 * num4 - camPos + vector6);
+                    num4 = 0.35f;
+                    vector6 += -rCam.room.lightAngle.normalized * num3 * 0.5f;
+                }
             }
             vector3 = vector4;
             num = num3;
